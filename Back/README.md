@@ -21,9 +21,324 @@
   <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
   [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
 
-## Description
+## API del MVP
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+Base URL local:
+
+```text
+http://localhost:3000
+```
+
+Las rutas protegidas requieren el header:
+
+```http
+Authorization: Bearer <accessToken>
+```
+
+Los cuerpos deben enviarse como JSON con:
+
+```http
+Content-Type: application/json
+```
+
+## Flujo de autenticación
+
+### Registrar usuario
+
+```http
+POST /auth/register
+```
+
+Body:
+
+```json
+{
+  "email": "cliente@correo.com",
+  "password": "Cliente1234!"
+}
+```
+
+La cuenta se crea con:
+
+```text
+estado: PENDING
+rol: CLIENT
+```
+
+Mientras esté pendiente, el usuario no puede iniciar sesión.
+
+Respuesta `201`:
+
+```json
+{
+  "message": "Registro exitoso. Tu cuenta está pendiente de aprobación.",
+  "user": {
+    "id": 2,
+    "email": "cliente@correo.com",
+    "estado": "PENDING"
+  }
+}
+```
+
+### Iniciar sesión
+
+```http
+POST /auth/login
+```
+
+Body:
+
+```json
+{
+  "email": "cliente@correo.com",
+  "password": "Cliente1234!"
+}
+```
+
+Respuesta `201`:
+
+```json
+{
+  "accessToken": "<jwt>",
+  "user": {
+    "id": 2,
+    "email": "cliente@correo.com",
+    "rol": "CLIENT",
+    "estado": "ACTIVE",
+    "perfilCompleto": false
+  }
+}
+```
+
+Guarda `accessToken` y envíalo en las rutas protegidas. Una cuenta `PENDING` o `REJECTED` recibe `401`.
+
+El administrador inicial es:
+
+```text
+email: admin@tienda.local
+password: Admin1234!
+```
+
+## Usuarios y perfiles
+
+### Listar solicitudes pendientes
+
+```http
+GET /users/pending
+```
+
+Requiere JWT de un usuario con rol `ADMIN`.
+
+### Activar usuario y asignar rol
+
+```http
+PATCH /users/:id/activate
+```
+
+Requiere JWT de administrador.
+
+Body:
+
+```json
+{
+  "rol": "CLIENT"
+}
+```
+
+Roles válidos:
+
+```text
+CLIENT
+ADMIN
+```
+
+La cuenta pasa de `PENDING` a `ACTIVE`.
+
+### Listar clientes activos
+
+```http
+GET /users/clients
+```
+
+Requiere JWT de administrador.
+
+### Consultar perfil propio
+
+```http
+GET /users/profile
+```
+
+Requiere JWT. El backend obtiene el usuario desde el token.
+
+### Actualizar perfil propio
+
+```http
+PATCH /users/profile
+```
+
+Requiere JWT. No se envía el ID del usuario.
+
+Body:
+
+```json
+{
+  "nombre": "Ana",
+  "apellido": "Gómez",
+  "tipoDocumento": "CC",
+  "numeroDocumento": "123456789",
+  "email": "ana@correo.com",
+  "telefono": "3000000000",
+  "direccion": "Calle 1 # 2-3"
+}
+```
+
+## Productos
+
+### Listar productos disponibles
+
+```http
+GET /products
+```
+
+Requiere JWT. Devuelve únicamente productos activos con stock mayor que cero.
+
+Respuesta:
+
+```json
+{
+  "id": 1,
+  "nombre": "Café especial",
+  "descripcion": "Café de origen",
+  "precio": 1500,
+  "stock": 10
+}
+```
+
+Este endpoint no devuelve el campo `activo` porque todos los resultados ya están activos.
+
+### Listar todos los productos
+
+```http
+GET /products/all
+```
+
+Requiere JWT de administrador. Devuelve productos activos, inactivos, con stock o sin stock.
+
+### Crear producto
+
+```http
+POST /products
+```
+
+Requiere JWT de administrador.
+
+Body:
+
+```json
+{
+  "nombre": "Café especial",
+  "descripcion": "Café de origen",
+  "precio": 1500,
+  "stock": 10
+}
+```
+
+Validaciones:
+
+- `nombre`: obligatorio.
+- `descripcion`: opcional.
+- `precio`: numérico y mayor que `0`.
+- `stock`: entero mayor o igual que `0`.
+
+### Actualizar producto
+
+```http
+PATCH /products/:id
+```
+
+Requiere JWT de administrador.
+
+Body parcial:
+
+```json
+{
+  "precio": 1750,
+  "stock": 8,
+  "activo": true
+}
+```
+
+Los campos omitidos conservan su valor actual. Los cambios aparecen inmediatamente en `GET /products`.
+
+## Ventas
+
+Todas las rutas de ventas requieren JWT.
+
+### Crear compra
+
+```http
+POST /sales
+```
+
+El usuario comprador se obtiene del JWT. No se envía `idUsuario` en el body.
+
+Body:
+
+```json
+{
+  "detalles": [
+    {
+      "idProducto": 1,
+      "cantidad": 2
+    }
+  ]
+}
+```
+
+El backend valida usuario activo, perfil completo, producto existente, producto activo y stock suficiente. Después calcula subtotales, total y descuenta el inventario dentro de una transacción atómica.
+
+### Listar ventas
+
+```http
+GET /sales
+```
+
+- `ADMIN`: recibe todas las ventas.
+- `CLIENT`: recibe únicamente sus propias ventas.
+
+### Consultar una venta con detalles
+
+```http
+GET /sales/:id
+```
+
+La respuesta incluye fecha, total, usuario, productos, cantidades, precios unitarios y subtotales. Un cliente no puede consultar una venta de otro usuario.
+
+## Respuestas y errores
+
+Errores frecuentes:
+
+| Código | Significado |
+|---|---|
+| `400` | Datos inválidos, stock insuficiente o perfil incompleto |
+| `401` | Token faltante/inválido o cuenta no activa |
+| `403` | No tiene permisos de administrador |
+| `404` | Recurso no encontrado |
+| `409` | Correo o nombre duplicado |
+
+## Orden recomendado para integrar el frontend
+
+1. Registrar usuario con `POST /auth/register`.
+2. Iniciar sesión como administrador.
+3. Consultar `GET /users/pending`.
+4. Activar el usuario con `PATCH /users/:id/activate`.
+5. Iniciar sesión con el usuario activado.
+6. Completar `PATCH /users/profile`.
+7. Consultar `GET /products`.
+8. Crear una compra con `POST /sales`.
+9. Consultar las compras con `GET /sales` o `GET /sales/:id`.
+
+El registro se realiza únicamente mediante `POST /auth/register`. No existe `POST /users`.
 
 ## Project setup
 
